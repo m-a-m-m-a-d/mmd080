@@ -1,9 +1,137 @@
-Emergency
-# Project: emegerncy solution
+# Project: Digikala Emergency Task Management System
+# Author: Developer Team
+# Date: 2026-01-08
 
-import json
 import datetime
+import logging
+from typing import List, Optional
+from sqlalchemy import create_engine, Column, Integer, String, Boolean, DateTime, ForeignKey
+from sqlalchemy.orm import declarative_base, sessionmaker, relationship
+from flask import Flask, request, jsonify
 
+# ------------------------------
+# Logging Configuration
+# ------------------------------
+logging.basicConfig(
+    filename="digikala_emergency.log",
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
+
+# ------------------------------
+# Database Setup
+# ------------------------------
+Base = declarative_base()
+engine = create_engine("sqlite:///digikala_tasks.db", echo=False)
+SessionLocal = sessionmaker(bind=engine)
+
+# ------------------------------
+# User Model
+# ------------------------------
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String, unique=True, nullable=False)
+    role = Column(String, default="employee")  # admin, manager, employee
+    tasks = relationship("Task", back_populates="assigned_user")
+
+    def __repr__(self):
+        return f"<User(username={self.username}, role={self.role})>"
+
+# ------------------------------
+# Task Model
+# ------------------------------
+class Task(Base):
+    __tablename__ = "tasks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=False)
+    category = Column(String, default="General")
+    priority = Column(Integer, default=3)  # 1=High, 2=Medium, 3=Low
+    done = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.datetime.now)
+    user_id = Column(Integer, ForeignKey("users.id"))
+
+    assigned_user = relationship("User", back_populates="tasks")
+
+    def __repr__(self):
+        return f"<Task(title={self.title}, category={self.category}, priority={self.priority}, done={self.done})>"
+
+# ------------------------------
+# Database Initialization
+# ------------------------------
+Base.metadata.create_all(bind=engine)
+
+# ------------------------------
+# Task Manager Class
+# ------------------------------
+class TaskManager:
+    def __init__(self):
+        self.db = SessionLocal()
+
+    def add_user(self, username: str, role: str = "employee"):
+        user = User(username=username, role=role)
+        self.db.add(user)
+        self.db.commit()
+        logging.info(f"User '{username}' added with role '{role}'.")
+
+    def add_task(self, title: str, category: str, priority: int, username: str):
+        user = self.db.query(User).filter_by(username=username).first()
+        if not user:
+            raise ValueError("User not found.")
+        task = Task(title=title, category=category, priority=priority, assigned_user=user)
+        self.db.add(task)
+        self.db.commit()
+        logging.info(f"Task '{title}' added for user '{username}'.")
+
+    def complete_task(self, task_id: int):
+        task = self.db.query(Task).filter_by(id=task_id).first()
+        if task:
+            task.done = True
+            self.db.commit()
+            logging.info(f"Task '{task.title}' marked as completed.")
+
+    def generate_report(self):
+        tasks = self.db.query(Task).all()
+        total = len(tasks)
+        completed = len([t for t in tasks if t.done])
+        pending = total - completed
+        return {
+            "total": total,
+            "completed": completed,
+            "pending": pending
+        }
+
+# ------------------------------
+# Flask API
+# ------------------------------
+app = Flask(__name__)
+manager = TaskManager()
+
+@app.route("/users", methods=["POST"])
+def create_user():
+    data = request.json
+    manager.add_user(data["username"], data.get("role", "employee"))
+    return jsonify({"message": "User created successfully."})
+
+@app.route("/tasks", methods=["POST"])
+def create_task():
+    data = request.json
+    manager.add_task(data["title"], data.get("category", "General"), data.get("priority", 3), data["username"])
+    return jsonify({"message": "Task created successfully."})
+
+@app.route("/tasks/<int:task_id>/complete", methods=["PUT"])
+def complete_task(task_id):
+    manager.complete_task(task_id)
+    return jsonify({"message": "Task marked as completed."})
+
+@app.route("/report", methods=["GET"])
+def report():
+    return jsonify(manager.generate_report())
+
+if __name__ == "__main__":
+    app.run(debug=True)
 class Task:
     def __init__(self, title, done=False, created_at=None):
         self.title = title
@@ -167,7 +295,3 @@ def main():
             break
         else:
             print("Invalid choice, try again.")
-
-
-if __name__ == "__main__":
-    main()
